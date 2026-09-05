@@ -17,9 +17,19 @@ api.interceptors.response.use(
   (res) => res,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
+      const msg = error.response?.data?.message || '';
+      // Only logout and redirect if it's an actual auth token error
+      if (
+        msg.includes('token') ||
+        msg.includes('Token') ||
+        msg.includes('Access token required') ||
+        msg.includes('User not found') ||
+        error.config?.url?.includes('/auth/')
+      ) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { testConnection } = require('./config/database');
+const { connectDB } = require('./config/database');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 
 // Route imports
@@ -58,7 +58,7 @@ app.use(errorHandler);
 
 // Start server
 const start = async () => {
-  await testConnection();
+  await connectDB();
   app.listen(PORT, () => {
     console.log(`\n🚀 Server running on http://localhost:${PORT}`);
     console.log(`📚 API base: http://localhost:${PORT}/api`);

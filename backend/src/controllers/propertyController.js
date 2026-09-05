@@ -1,49 +1,74 @@
+const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
-const { pool } = require('../config/database');
+const Property = require('../models/Property');
+const Review = require('../models/Review');
+const Wishlist = require('../models/Wishlist');
+const Booking = require('../models/Booking');
+const Payment = require('../models/Payment');
+const User = require('../models/User');
+
+const findPropertyByIdOrUuid = async (id) => {
+  if (mongoose.Types.ObjectId.isValid(id)) {
+    const prop = await Property.findById(id);
+    if (prop) return prop;
+  }
+  return await Property.findOne({ uuid: id });
+};
 
 // GET /api/properties - with filters
 const getProperties = async (req, res, next) => {
   try {
     const { city, min_price, max_price, property_type, bedrooms, available, featured, page = 1, limit = 12, search } = req.query;
-    const offset = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
-    let where = ['p.status = "active"'];
-    const params = [];
+    const filter = { status: 'active' };
 
-    if (city) { where.push('p.city LIKE ?'); params.push(`%${city}%`); }
-    if (min_price) { where.push('p.price >= ?'); params.push(min_price); }
-    if (max_price) { where.push('p.price <= ?'); params.push(max_price); }
-    if (property_type) { where.push('p.property_type = ?'); params.push(property_type); }
-    if (bedrooms) { where.push('p.bedrooms >= ?'); params.push(bedrooms); }
-    if (available === 'true') { where.push('p.is_available = TRUE'); }
-    if (featured === 'true') { where.push('p.is_featured = TRUE'); }
-    if (search) { where.push('(p.title LIKE ? OR p.location LIKE ? OR p.description LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+    if (city) filter.city = { $regex: city, $options: 'i' };
+    if (min_price || max_price) {
+      filter.price = {};
+      if (min_price) filter.price.$gte = Number(min_price);
+      if (max_price) filter.price.$lte = Number(max_price);
+    }
+    if (property_type) filter.property_type = property_type;
+    if (bedrooms) filter.bedrooms = { $gte: Number(bedrooms) };
+    if (available === 'true') filter.is_available = true;
+    if (featured === 'true') filter.is_featured = true;
+    if (search) {
+      filter.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { location: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+      ];
+    }
 
-    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const properties = await Property.find(filter)
+      .populate('owner_id', 'name email phone avatar')
+      .sort({ is_featured: -1, created_at: -1 })
+      .skip(skip)
+      .limit(Number(limit));
 
-    const [properties] = await pool.query(
-      `SELECT p.*, u.name as owner_name, u.email as owner_email, u.phone as owner_phone
-       FROM properties p
-       JOIN users u ON p.owner_id = u.id
-       ${whereClause}
-       ORDER BY p.is_featured DESC, p.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, parseInt(limit), parseInt(offset)]
-    );
+    const total = await Property.countDocuments(filter);
 
-    const [countResult] = await pool.query(
-      `SELECT COUNT(*) as total FROM properties p ${whereClause}`,
-      params
-    );
+    const formattedProperties = properties.map((p) => {
+      const obj = p.toJSON();
+      if (p.owner_id && typeof p.owner_id === 'object') {
+        obj.owner_name = p.owner_id.name;
+        obj.owner_email = p.owner_id.email;
+        obj.owner_phone = p.owner_id.phone;
+        obj.owner_avatar = p.owner_id.avatar;
+        obj.owner_id = p.owner_id._id.toString();
+      }
+      return obj;
+    });
 
     res.json({
       success: true,
-      data: properties,
+      data: formattedProperties,
       pagination: {
-        total: countResult[0].total,
+        total,
         page: parseInt(page),
         limit: parseInt(limit),
-        totalPages: Math.ceil(countResult[0].total / limit),
+        totalPages: Math.ceil(total / limit),
       },
     });
   } catch (error) { next(error); }
@@ -53,25 +78,35 @@ const getProperties = async (req, res, next) => {
 const getProperty = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const [properties] = await pool.query(
-      `SELECT p.*, u.name as owner_name, u.email as owner_email, u.phone as owner_phone, u.avatar as owner_avatar
-       FROM properties p JOIN users u ON p.owner_id = u.id
-       WHERE p.uuid = ? OR p.id = ?`,
-      [id, id]
-    );
+    const property = await findPropertyByIdOrUuid(id);
+    if (!property) return res.status(404).json({ success: false, message: 'Property not found' });
 
-    if (!properties.length) return res.status(404).json({ success: false, message: 'Property not found' });
+    await property.populate('owner_id', 'name email phone avatar');
 
-    const property = properties[0];
+    const propertyObj = property.toJSON();
+    if (property.owner_id && typeof property.owner_id === 'object') {
+      propertyObj.owner_name = property.owner_id.name;
+      propertyObj.owner_email = property.owner_id.email;
+      propertyObj.owner_phone = property.owner_id.phone;
+      propertyObj.owner_avatar = property.owner_id.avatar;
+      propertyObj.owner_id = property.owner_id._id.toString();
+    }
 
     // Get reviews
-    const [reviews] = await pool.query(
-      `SELECT r.*, u.name as reviewer_name, u.avatar as reviewer_avatar
-       FROM reviews r JOIN users u ON r.user_id = u.id
-       WHERE r.property_id = ? AND r.is_approved = TRUE
-       ORDER BY r.created_at DESC LIMIT 10`,
-      [property.id]
-    );
+    const reviews = await Review.find({ property_id: property._id, is_approved: true })
+      .populate('user_id', 'name avatar')
+      .sort({ created_at: -1 })
+      .limit(10);
+
+    const formattedReviews = reviews.map((r) => {
+      const obj = r.toJSON();
+      if (r.user_id && typeof r.user_id === 'object') {
+        obj.reviewer_name = r.user_id.name;
+        obj.reviewer_avatar = r.user_id.avatar;
+        obj.user_id = r.user_id._id.toString();
+      }
+      return obj;
+    });
 
     // Check wishlist if authenticated
     let inWishlist = false;
@@ -81,12 +116,12 @@ const getProperty = async (req, res, next) => {
         const jwt = require('jsonwebtoken');
         const token = authHeader.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const [wl] = await pool.query('SELECT id FROM wishlists WHERE user_id = ? AND property_id = ?', [decoded.userId, property.id]);
-        inWishlist = wl.length > 0;
+        const wl = await Wishlist.findOne({ user_id: decoded.userId, property_id: property._id });
+        inWishlist = !!wl;
       } catch {}
     }
 
-    res.json({ success: true, data: { ...property, reviews, inWishlist } });
+    res.json({ success: true, data: { ...propertyObj, reviews: formattedReviews, inWishlist } });
   } catch (error) { next(error); }
 };
 
@@ -94,16 +129,36 @@ const getProperty = async (req, res, next) => {
 const createProperty = async (req, res, next) => {
   try {
     const { title, description, location, city, state, country, zip_code, price, price_type, property_type, bedrooms, bathrooms, area_sqft, amenities, latitude, longitude } = req.body;
-    const images = req.files ? req.files.map(f => `/uploads/${f.filename}`) : [];
+    const images = req.files ? req.files.map((f) => `/uploads/${f.filename}`) : [];
 
-    const [result] = await pool.query(
-      `INSERT INTO properties (uuid, owner_id, title, description, location, city, state, country, zip_code, price, price_type, property_type, bedrooms, bathrooms, area_sqft, amenities, images, latitude, longitude)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [uuidv4(), req.user.id, title, description, location, city, state, country || 'India', zip_code, price, price_type || 'per_month', property_type || 'apartment', bedrooms || 1, bathrooms || 1, area_sqft, JSON.stringify(amenities || []), JSON.stringify(images), latitude, longitude]
-    );
+    let parsedAmenities = [];
+    if (amenities) {
+      parsedAmenities = typeof amenities === 'string' ? JSON.parse(amenities) : amenities;
+    }
 
-    const [newProperty] = await pool.query('SELECT * FROM properties WHERE id = ?', [result.insertId]);
-    res.status(201).json({ success: true, message: 'Property created', data: newProperty[0] });
+    const newProperty = await Property.create({
+      uuid: uuidv4(),
+      owner_id: req.user.id || req.user._id,
+      title,
+      description,
+      location,
+      city,
+      state,
+      country: country || 'India',
+      zip_code,
+      price: Number(price),
+      price_type: price_type || 'per_month',
+      property_type: property_type || 'apartment',
+      bedrooms: bedrooms ? Number(bedrooms) : 1,
+      bathrooms: bathrooms ? Number(bathrooms) : 1,
+      area_sqft: area_sqft ? Number(area_sqft) : null,
+      amenities: parsedAmenities,
+      images,
+      latitude: latitude ? Number(latitude) : null,
+      longitude: longitude ? Number(longitude) : null,
+    });
+
+    res.status(201).json({ success: true, message: 'Property created', data: newProperty });
   } catch (error) { next(error); }
 };
 
@@ -111,31 +166,30 @@ const createProperty = async (req, res, next) => {
 const updateProperty = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const [properties] = await pool.query('SELECT * FROM properties WHERE uuid = ? OR id = ?', [id, id]);
-    if (!properties.length) return res.status(404).json({ success: false, message: 'Property not found' });
-    const property = properties[0];
+    const property = await findPropertyByIdOrUuid(id);
+    if (!property) return res.status(404).json({ success: false, message: 'Property not found' });
 
-    if (property.owner_id !== req.user.id && req.user.role !== 'admin') {
+    const ownerIdStr = property.owner_id.toString();
+    const userIdStr = (req.user.id || req.user._id).toString();
+
+    if (ownerIdStr !== userIdStr && req.user.role !== 'admin') {
       return res.status(403).json({ success: false, message: 'Not authorized' });
     }
 
     const fields = ['title', 'description', 'location', 'city', 'state', 'price', 'property_type', 'bedrooms', 'bathrooms', 'area_sqft', 'is_available', 'status'];
-    const updates = [];
-    const values = [];
-
-    fields.forEach(f => {
-      if (req.body[f] !== undefined) { updates.push(`${f} = ?`); values.push(req.body[f]); }
+    fields.forEach((f) => {
+      if (req.body[f] !== undefined) property[f] = req.body[f];
     });
-    if (req.body.amenities) { updates.push('amenities = ?'); values.push(JSON.stringify(req.body.amenities)); }
-    if (req.files?.length) { updates.push('images = ?'); values.push(JSON.stringify(req.files.map(f => `/uploads/${f.filename}`))); }
 
-    if (!updates.length) return res.status(400).json({ success: false, message: 'No fields to update' });
+    if (req.body.amenities) {
+      property.amenities = typeof req.body.amenities === 'string' ? JSON.parse(req.body.amenities) : req.body.amenities;
+    }
+    if (req.files?.length) {
+      property.images = req.files.map((f) => `/uploads/${f.filename}`);
+    }
 
-    values.push(property.id);
-    await pool.query(`UPDATE properties SET ${updates.join(', ')} WHERE id = ?`, values);
-
-    const [updated] = await pool.query('SELECT * FROM properties WHERE id = ?', [property.id]);
-    res.json({ success: true, message: 'Property updated', data: updated[0] });
+    await property.save();
+    res.json({ success: true, message: 'Property updated', data: property });
   } catch (error) { next(error); }
 };
 
@@ -143,14 +197,17 @@ const updateProperty = async (req, res, next) => {
 const deleteProperty = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const [properties] = await pool.query('SELECT * FROM properties WHERE uuid = ? OR id = ?', [id, id]);
-    if (!properties.length) return res.status(404).json({ success: false, message: 'Property not found' });
+    const property = await findPropertyByIdOrUuid(id);
+    if (!property) return res.status(404).json({ success: false, message: 'Property not found' });
 
-    if (properties[0].owner_id !== req.user.id && req.user.role !== 'admin') {
+    const ownerIdStr = property.owner_id.toString();
+    const userIdStr = (req.user.id || req.user._id).toString();
+
+    if (ownerIdStr !== userIdStr && req.user.role !== 'admin') {
       return res.status(403).json({ success: false, message: 'Not authorized' });
     }
 
-    await pool.query('DELETE FROM properties WHERE id = ?', [properties[0].id]);
+    await Property.findByIdAndDelete(property._id);
     res.json({ success: true, message: 'Property deleted' });
   } catch (error) { next(error); }
 };
@@ -158,15 +215,27 @@ const deleteProperty = async (req, res, next) => {
 // GET /api/properties/owner/my-properties
 const getMyProperties = async (req, res, next) => {
   try {
-    const [properties] = await pool.query(
-      `SELECT p.*, 
-        (SELECT COUNT(*) FROM bookings WHERE property_id = p.id AND status IN ('confirmed','completed')) as total_bookings,
-        (SELECT COUNT(*) FROM bookings WHERE property_id = p.id AND status = 'confirmed') as active_bookings,
-        (SELECT COALESCE(SUM(amount),0) FROM payments pay JOIN bookings b ON pay.booking_id = b.id WHERE b.property_id = p.id AND pay.status = 'completed') as total_revenue
-       FROM properties p WHERE p.owner_id = ? ORDER BY p.created_at DESC`,
-      [req.user.id]
-    );
-    res.json({ success: true, data: properties });
+    const ownerId = req.user.id || req.user._id;
+    const properties = await Property.find({ owner_id: ownerId }).sort({ created_at: -1 });
+
+    const propertyIds = properties.map((p) => p._id);
+    const bookings = await Booking.find({ property_id: { $in: propertyIds } });
+    const confirmedBookingIds = bookings.filter((b) => b.status === 'confirmed' || b.status === 'completed').map((b) => b._id);
+    const payments = await Payment.find({ booking_id: { $in: confirmedBookingIds }, status: 'completed' });
+
+    const formattedProperties = properties.map((p) => {
+      const obj = p.toJSON();
+      const pBookings = bookings.filter((b) => b.property_id.toString() === p._id.toString());
+      obj.total_bookings = pBookings.filter((b) => ['confirmed', 'completed'].includes(b.status)).length;
+      obj.active_bookings = pBookings.filter((b) => b.status === 'confirmed').length;
+
+      const pBookingIds = pBookings.map((b) => b._id.toString());
+      const pPayments = payments.filter((pay) => pBookingIds.includes(pay.booking_id.toString()));
+      obj.total_revenue = pPayments.reduce((sum, pay) => sum + Number(pay.amount || 0), 0);
+      return obj;
+    });
+
+    res.json({ success: true, data: formattedProperties });
   } catch (error) { next(error); }
 };
 
@@ -174,20 +243,22 @@ const getMyProperties = async (req, res, next) => {
 const toggleWishlist = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const [properties] = await pool.query('SELECT id FROM properties WHERE uuid = ? OR id = ?', [id, id]);
-    if (!properties.length) return res.status(404).json({ success: false, message: 'Property not found' });
+    const property = await findPropertyByIdOrUuid(id);
+    if (!property) return res.status(404).json({ success: false, message: 'Property not found' });
 
-    const propertyId = properties[0].id;
-    const [existing] = await pool.query('SELECT id FROM wishlists WHERE user_id = ? AND property_id = ?', [req.user.id, propertyId]);
+    const userId = req.user.id || req.user._id;
+    const propertyId = property._id;
 
-    if (existing.length) {
-      await pool.query('DELETE FROM wishlists WHERE user_id = ? AND property_id = ?', [req.user.id, propertyId]);
+    const existing = await Wishlist.findOne({ user_id: userId, property_id: propertyId });
+
+    if (existing) {
+      await Wishlist.findByIdAndDelete(existing._id);
       return res.json({ success: true, message: 'Removed from wishlist', inWishlist: false });
     } else {
-      await pool.query('INSERT INTO wishlists (user_id, property_id) VALUES (?, ?)', [req.user.id, propertyId]);
+      await Wishlist.create({ user_id: userId, property_id: propertyId });
       return res.json({ success: true, message: 'Added to wishlist', inWishlist: true });
     }
   } catch (error) { next(error); }
 };
 
-module.exports = { getProperties, getProperty, createProperty, updateProperty, deleteProperty, getMyProperties, toggleWishlist };
+module.exports = { getProperties, getProperty, createProperty, updateProperty, deleteProperty, getMyProperties, toggleWishlist, findPropertyByIdOrUuid };

@@ -1,25 +1,42 @@
+const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
-const { pool } = require('../config/database');
+const MaintenanceRequest = require('../models/MaintenanceRequest');
+const Property = require('../models/Property');
+const User = require('../models/User');
 const { createNotification } = require('../utils/notification');
+const { findPropertyByIdOrUuid } = require('./propertyController');
+
+const findMaintenanceByIdOrUuid = async (id) => {
+  if (mongoose.Types.ObjectId.isValid(id)) {
+    const req = await MaintenanceRequest.findById(id);
+    if (req) return req;
+  }
+  return await MaintenanceRequest.findOne({ uuid: id });
+};
 
 // POST /api/maintenance
 const createRequest = async (req, res, next) => {
   try {
     const { property_id, title, description, category, priority } = req.body;
-    const images = req.files ? req.files.map(f => `/uploads/${f.filename}`) : [];
+    const images = req.files ? req.files.map((f) => `/uploads/${f.filename}`) : [];
 
-    const [properties] = await pool.query('SELECT id, owner_id, title FROM properties WHERE uuid = ? OR id = ?', [property_id, property_id]);
-    if (!properties.length) return res.status(404).json({ success: false, message: 'Property not found' });
+    const property = await findPropertyByIdOrUuid(property_id);
+    if (!property) return res.status(404).json({ success: false, message: 'Property not found' });
 
-    const [result] = await pool.query(
-      `INSERT INTO maintenance_requests (uuid, property_id, tenant_id, title, description, category, priority, images) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [uuidv4(), properties[0].id, req.user.id, title, description, category || 'other', priority || 'medium', JSON.stringify(images)]
-    );
+    const request = await MaintenanceRequest.create({
+      uuid: uuidv4(),
+      property_id: property._id,
+      tenant_id: req.user.id || req.user._id,
+      title,
+      description,
+      category: category || 'other',
+      priority: priority || 'medium',
+      images,
+    });
 
-    await createNotification(properties[0].owner_id, 'New Maintenance Request', `New ${priority || 'medium'} priority request: "${title}"`, 'maintenance', result.insertId);
+    await createNotification(property.owner_id, 'New Maintenance Request', `New ${priority || 'medium'} priority request: "${title}"`, 'maintenance', request._id);
 
-    const [request] = await pool.query('SELECT * FROM maintenance_requests WHERE id = ?', [result.insertId]);
-    res.status(201).json({ success: true, message: 'Maintenance request submitted', data: request[0] });
+    res.status(201).json({ success: true, message: 'Maintenance request submitted', data: request });
   } catch (error) { next(error); }
 };
 
@@ -27,33 +44,59 @@ const createRequest = async (req, res, next) => {
 const getRequests = async (req, res, next) => {
   try {
     const { status, priority, page = 1, limit = 10 } = req.query;
-    const offset = (page - 1) * limit;
-    const { role, id } = req.user;
+    const skip = (page - 1) * limit;
+    const { role } = req.user;
+    const userId = req.user.id || req.user._id;
 
-    let where = [];
-    const params = [];
+    const filter = {};
 
-    if (role === 'tenant') { where.push('mr.tenant_id = ?'); params.push(id); }
-    else if (role === 'owner') { where.push('p.owner_id = ?'); params.push(id); }
-    if (status) { where.push('mr.status = ?'); params.push(status); }
-    if (priority) { where.push('mr.priority = ?'); params.push(priority); }
+    if (role === 'tenant') {
+      filter.tenant_id = userId;
+    } else if (role === 'owner') {
+      const ownerProperties = await Property.find({ owner_id: userId }).select('_id');
+      const ownerPropertyIds = ownerProperties.map((p) => p._id);
+      filter.property_id = { $in: ownerPropertyIds };
+    }
 
-    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    if (status) filter.status = status;
+    if (priority) filter.priority = priority;
 
-    const [requests] = await pool.query(
-      `SELECT mr.*, p.title as property_title, p.location, u.name as tenant_name, u.email as tenant_email
-       FROM maintenance_requests mr
-       JOIN properties p ON mr.property_id = p.id
-       JOIN users u ON mr.tenant_id = u.id
-       ${whereClause}
-       ORDER BY FIELD(mr.priority, 'urgent','high','medium','low'), mr.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, parseInt(limit), parseInt(offset)]
-    );
+    const priorityWeight = { urgent: 1, high: 2, medium: 3, low: 4 };
 
-    const [count] = await pool.query(`SELECT COUNT(*) as total FROM maintenance_requests mr JOIN properties p ON mr.property_id = p.id ${whereClause}`, params);
+    const requests = await MaintenanceRequest.find(filter)
+      .populate('property_id', 'title location')
+      .populate('tenant_id', 'name email')
+      .sort({ created_at: -1 })
+      .skip(skip)
+      .limit(Number(limit));
 
-    res.json({ success: true, data: requests, pagination: { total: count[0].total, page: parseInt(page), limit: parseInt(limit) } });
+    // Sort by priority weight
+    requests.sort((a, b) => (priorityWeight[a.priority] || 99) - (priorityWeight[b.priority] || 99));
+
+    const total = await MaintenanceRequest.countDocuments(filter);
+
+    const formattedRequests = requests.map((r) => {
+      const obj = r.toJSON();
+      if (r.property_id && typeof r.property_id === 'object') {
+        obj.property_title = r.property_id.title;
+        obj.location = r.property_id.location;
+      }
+      if (r.tenant_id && typeof r.tenant_id === 'object') {
+        obj.tenant_name = r.tenant_id.name;
+        obj.tenant_email = r.tenant_id.email;
+      }
+      return obj;
+    });
+
+    res.json({
+      success: true,
+      data: formattedRequests,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+      },
+    });
   } catch (error) { next(error); }
 };
 
@@ -61,29 +104,25 @@ const getRequests = async (req, res, next) => {
 const updateRequest = async (req, res, next) => {
   try {
     const { status, owner_notes } = req.body;
-    const [requests] = await pool.query(
-      `SELECT mr.*, p.owner_id FROM maintenance_requests mr JOIN properties p ON mr.property_id = p.id WHERE mr.uuid = ? OR mr.id = ?`,
-      [req.params.id, req.params.id]
-    );
-    if (!requests.length) return res.status(404).json({ success: false, message: 'Request not found' });
-    const request = requests[0];
+    const request = await findMaintenanceByIdOrUuid(req.params.id);
+    if (!request) return res.status(404).json({ success: false, message: 'Request not found' });
 
-    if (req.user.role === 'owner' && request.owner_id !== req.user.id) return res.status(403).json({ success: false, message: 'Access denied' });
+    const property = await Property.findById(request.property_id);
+    const userIdStr = (req.user.id || req.user._id).toString();
 
-    const updates = [];
-    const values = [];
-    if (status) {
-      updates.push('status = ?'); values.push(status);
-      if (status === 'resolved') { updates.push('resolved_at = NOW()'); }
+    if (req.user.role === 'owner' && property && property.owner_id.toString() !== userIdStr) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
     }
-    if (owner_notes !== undefined) { updates.push('owner_notes = ?'); values.push(owner_notes); }
 
-    if (!updates.length) return res.status(400).json({ success: false, message: 'Nothing to update' });
+    if (status) {
+      request.status = status;
+      if (status === 'resolved') request.resolved_at = new Date();
+    }
+    if (owner_notes !== undefined) request.owner_notes = owner_notes;
 
-    values.push(request.id);
-    await pool.query(`UPDATE maintenance_requests SET ${updates.join(', ')} WHERE id = ?`, values);
+    await request.save();
 
-    await createNotification(request.tenant_id, 'Maintenance Update', `Your maintenance request "${request.title}" status changed to ${status}`, 'maintenance', request.id);
+    await createNotification(request.tenant_id, 'Maintenance Update', `Your maintenance request "${request.title}" status changed to ${status}`, 'maintenance', request._id);
 
     res.json({ success: true, message: 'Request updated' });
   } catch (error) { next(error); }

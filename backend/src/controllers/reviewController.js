@@ -1,34 +1,60 @@
+const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
-const { pool } = require('../config/database');
+const Review = require('../models/Review');
+const Property = require('../models/Property');
+const Booking = require('../models/Booking');
+const User = require('../models/User');
+const { findPropertyByIdOrUuid } = require('./propertyController');
+const { findBookingByIdOrUuid } = require('./bookingController');
 
 // POST /api/reviews
 const createReview = async (req, res, next) => {
   try {
     const { property_id, booking_id, rating, comment } = req.body;
 
-    const [properties] = await pool.query('SELECT id FROM properties WHERE uuid = ? OR id = ?', [property_id, property_id]);
-    if (!properties.length) return res.status(404).json({ success: false, message: 'Property not found' });
-    const propId = properties[0].id;
+    const property = await findPropertyByIdOrUuid(property_id);
+    if (!property) return res.status(404).json({ success: false, message: 'Property not found' });
+    const propId = property._id;
+    const userId = req.user.id || req.user._id;
 
+    let validBookingId = null;
     if (booking_id) {
-      const [bookings] = await pool.query('SELECT id, status FROM bookings WHERE id = ? AND tenant_id = ? AND property_id = ?', [booking_id, req.user.id, propId]);
-      if (!bookings.length) return res.status(400).json({ success: false, message: 'Invalid booking' });
-      if (!['completed', 'confirmed'].includes(bookings[0].status)) return res.status(400).json({ success: false, message: 'Can only review confirmed/completed bookings' });
+      const booking = await findBookingByIdOrUuid(booking_id);
+      if (!booking || booking.tenant_id.toString() !== userId.toString() || booking.property_id.toString() !== propId.toString()) {
+        return res.status(400).json({ success: false, message: 'Invalid booking' });
+      }
+      if (!['completed', 'confirmed'].includes(booking.status)) {
+        return res.status(400).json({ success: false, message: 'Can only review confirmed/completed bookings' });
+      }
+      validBookingId = booking._id;
     }
 
-    const [result] = await pool.query(
-      `INSERT INTO reviews (uuid, user_id, property_id, booking_id, rating, comment) VALUES (?, ?, ?, ?, ?, ?)`,
-      [uuidv4(), req.user.id, propId, booking_id || null, rating, comment]
-    );
+    const review = await Review.create({
+      uuid: uuidv4(),
+      user_id: userId,
+      property_id: propId,
+      booking_id: validBookingId,
+      rating: Number(rating),
+      comment,
+    });
 
     // Update property avg rating
-    await pool.query(
-      `UPDATE properties SET avg_rating = (SELECT AVG(rating) FROM reviews WHERE property_id = ?), total_reviews = (SELECT COUNT(*) FROM reviews WHERE property_id = ?) WHERE id = ?`,
-      [propId, propId, propId]
-    );
+    const allReviews = await Review.find({ property_id: propId, is_approved: true });
+    const totalReviews = allReviews.length;
+    const avgRating = totalReviews > 0 ? allReviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews : 0;
 
-    const [review] = await pool.query('SELECT r.*, u.name as reviewer_name FROM reviews r JOIN users u ON r.user_id = u.id WHERE r.id = ?', [result.insertId]);
-    res.status(201).json({ success: true, message: 'Review submitted', data: review[0] });
+    await Property.findByIdAndUpdate(propId, {
+      avg_rating: Number(avgRating.toFixed(2)),
+      total_reviews: totalReviews,
+    });
+
+    await review.populate('user_id', 'name avatar');
+    const reviewObj = review.toJSON();
+    if (review.user_id && typeof review.user_id === 'object') {
+      reviewObj.reviewer_name = review.user_id.name;
+    }
+
+    res.status(201).json({ success: true, message: 'Review submitted', data: reviewObj });
   } catch (error) { next(error); }
 };
 
@@ -36,15 +62,26 @@ const createReview = async (req, res, next) => {
 const getPropertyReviews = async (req, res, next) => {
   try {
     const { propertyId } = req.params;
-    const [reviews] = await pool.query(
-      `SELECT r.*, u.name as reviewer_name, u.avatar as reviewer_avatar
-       FROM reviews r JOIN users u ON r.user_id = u.id
-       WHERE r.property_id = ? AND r.is_approved = TRUE
-       ORDER BY r.created_at DESC`,
-      [propertyId]
-    );
-    const [stats] = await pool.query('SELECT AVG(rating) as avg, COUNT(*) as total FROM reviews WHERE property_id = ? AND is_approved = TRUE', [propertyId]);
-    res.json({ success: true, data: reviews, stats: stats[0] });
+    const property = await findPropertyByIdOrUuid(propertyId);
+    const propId = property ? property._id : propertyId;
+
+    const reviews = await Review.find({ property_id: propId, is_approved: true })
+      .populate('user_id', 'name avatar')
+      .sort({ created_at: -1 });
+
+    const total = reviews.length;
+    const avg = total > 0 ? reviews.reduce((sum, r) => sum + r.rating, 0) / total : 0;
+
+    const formattedReviews = reviews.map((r) => {
+      const obj = r.toJSON();
+      if (r.user_id && typeof r.user_id === 'object') {
+        obj.reviewer_name = r.user_id.name;
+        obj.reviewer_avatar = r.user_id.avatar;
+      }
+      return obj;
+    });
+
+    res.json({ success: true, data: formattedReviews, stats: { avg: Number(avg.toFixed(2)), total } });
   } catch (error) { next(error); }
 };
 

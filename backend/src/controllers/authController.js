@@ -1,29 +1,35 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
-const { pool } = require('../config/database');
+const User = require('../models/User');
 const { sendEmail } = require('../utils/email');
 
 const generateToken = (userId) =>
-  jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
+  jwt.sign({ userId: userId.toString() }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
 
 // POST /api/auth/register
 const register = async (req, res, next) => {
   try {
     const { name, email, password, role = 'tenant', phone } = req.body;
 
-    const [existing] = await pool.query('SELECT id FROM users WHERE email = ?', [email]);
-    if (existing.length) return res.status(409).json({ success: false, message: 'Email already registered' });
+    const existing = await User.findOne({ email: email.toLowerCase() });
+    if (existing) return res.status(409).json({ success: false, message: 'Email already registered' });
 
     const hashedPassword = await bcrypt.hash(password, 12);
     const uuid = uuidv4();
+    const assignedRole = role === 'admin' ? 'tenant' : role;
 
-    const [result] = await pool.query(
-      `INSERT INTO users (uuid, name, email, password, role, phone, is_verified) VALUES (?, ?, ?, ?, ?, ?, TRUE)`,
-      [uuid, name, email, hashedPassword, role === 'admin' ? 'tenant' : role, phone]
-    );
+    const user = await User.create({
+      uuid,
+      name,
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      role: assignedRole,
+      phone,
+      is_verified: true,
+    });
 
-    const token = generateToken(result.insertId);
+    const token = generateToken(user._id);
 
     await sendEmail({
       to: email,
@@ -34,7 +40,10 @@ const register = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: 'Registration successful',
-      data: { token, user: { id: result.insertId, uuid, name, email, role: role === 'admin' ? 'tenant' : role, phone } },
+      data: {
+        token,
+        user: { id: user._id.toString(), uuid: user.uuid, name: user.name, email: user.email, role: user.role, phone: user.phone },
+      },
     });
   } catch (error) { next(error); }
 };
@@ -44,26 +53,22 @@ const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    const [users] = await pool.query(
-      'SELECT id, uuid, name, email, password, role, phone, avatar, is_active FROM users WHERE email = ?',
-      [email]
-    );
-
-    if (!users.length) return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    const user = users[0];
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) return res.status(401).json({ success: false, message: 'Invalid credentials' });
 
     if (!user.is_active) return res.status(401).json({ success: false, message: 'Account deactivated. Contact support.' });
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(401).json({ success: false, message: 'Invalid credentials' });
 
-    const token = generateToken(user.id);
-    const { password: _, ...userWithoutPassword } = user;
+    const token = generateToken(user._id);
+    const userObj = user.toJSON();
+    delete userObj.password;
 
     res.json({
       success: true,
       message: 'Login successful',
-      data: { token, user: userWithoutPassword },
+      data: { token, user: userObj },
     });
   } catch (error) { next(error); }
 };
@@ -71,11 +76,9 @@ const login = async (req, res, next) => {
 // GET /api/auth/me
 const getMe = async (req, res, next) => {
   try {
-    const [users] = await pool.query(
-      'SELECT id, uuid, name, email, role, phone, avatar, is_verified, created_at FROM users WHERE id = ?',
-      [req.user.id]
-    );
-    res.json({ success: true, data: users[0] });
+    const user = await User.findById(req.user.id || req.user._id).select('-password');
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    res.json({ success: true, data: user });
   } catch (error) { next(error); }
 };
 
@@ -85,22 +88,20 @@ const updateProfile = async (req, res, next) => {
     const { name, phone } = req.body;
     const avatar = req.file ? `/uploads/${req.file.filename}` : undefined;
 
-    const updates = [];
-    const values = [];
-    if (name) { updates.push('name = ?'); values.push(name); }
-    if (phone) { updates.push('phone = ?'); values.push(phone); }
-    if (avatar) { updates.push('avatar = ?'); values.push(avatar); }
+    const updates = {};
+    if (name) updates.name = name;
+    if (phone) updates.phone = phone;
+    if (avatar) updates.avatar = avatar;
 
-    if (!updates.length) return res.status(400).json({ success: false, message: 'No fields to update' });
+    if (!Object.keys(updates).length) return res.status(400).json({ success: false, message: 'No fields to update' });
 
-    values.push(req.user.id);
-    await pool.query(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, values);
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user.id || req.user._id,
+      { $set: updates },
+      { new: true, runValidators: true }
+    ).select('-password');
 
-    const [updated] = await pool.query(
-      'SELECT id, uuid, name, email, role, phone, avatar FROM users WHERE id = ?',
-      [req.user.id]
-    );
-    res.json({ success: true, message: 'Profile updated', data: updated[0] });
+    res.json({ success: true, message: 'Profile updated', data: updatedUser });
   } catch (error) { next(error); }
 };
 
@@ -109,12 +110,14 @@ const changePassword = async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body;
 
-    const [users] = await pool.query('SELECT password FROM users WHERE id = ?', [req.user.id]);
-    const isMatch = await bcrypt.compare(currentPassword, users[0].password);
+    const user = await User.findById(req.user.id || req.user._id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
     if (!isMatch) return res.status(400).json({ success: false, message: 'Current password is incorrect' });
 
-    const hashed = await bcrypt.hash(newPassword, 12);
-    await pool.query('UPDATE users SET password = ? WHERE id = ?', [hashed, req.user.id]);
+    user.password = await bcrypt.hash(newPassword, 12);
+    await user.save();
 
     res.json({ success: true, message: 'Password changed successfully' });
   } catch (error) { next(error); }

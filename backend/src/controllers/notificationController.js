@@ -1,21 +1,22 @@
-const { pool } = require('../config/database');
+const Notification = require('../models/Notification');
 
 // GET /api/notifications
 const getNotifications = async (req, res, next) => {
   try {
-    const [notifications] = await pool.query(
-      'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
-      [req.user.id]
-    );
-    const [unread] = await pool.query('SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = FALSE', [req.user.id]);
-    res.json({ success: true, data: notifications, unreadCount: unread[0].count });
+    const userId = req.user.id || req.user._id;
+    const notifications = await Notification.find({ user_id: userId })
+      .sort({ created_at: -1 })
+      .limit(50);
+    const unreadCount = await Notification.countDocuments({ user_id: userId, is_read: false });
+    res.json({ success: true, data: notifications, unreadCount });
   } catch (error) { next(error); }
 };
 
 // PUT /api/notifications/read-all
 const markAllRead = async (req, res, next) => {
   try {
-    await pool.query('UPDATE notifications SET is_read = TRUE WHERE user_id = ?', [req.user.id]);
+    const userId = req.user.id || req.user._id;
+    await Notification.updateMany({ user_id: userId }, { $set: { is_read: true } });
     res.json({ success: true, message: 'All notifications marked as read' });
   } catch (error) { next(error); }
 };
@@ -23,7 +24,8 @@ const markAllRead = async (req, res, next) => {
 // PUT /api/notifications/:id/read
 const markRead = async (req, res, next) => {
   try {
-    await pool.query('UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+    const userId = req.user.id || req.user._id;
+    await Notification.findOneAndUpdate({ _id: req.params.id, user_id: userId }, { $set: { is_read: true } });
     res.json({ success: true });
   } catch (error) { next(error); }
 };

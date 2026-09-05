@@ -3,15 +3,19 @@ const { validationResult } = require('express-validator');
 const errorHandler = (err, req, res, next) => {
   console.error('Error:', err);
 
-  if (err.code === 'ER_DUP_ENTRY') {
+  if (err.code === 11000 || err.code === 'ER_DUP_ENTRY') {
     return res.status(409).json({ success: false, message: 'Duplicate entry: Resource already exists' });
   }
 
-  if (err.code === 'ER_NO_REFERENCED_ROW_2') {
-    return res.status(400).json({ success: false, message: 'Referenced resource not found' });
+  if (err.name === 'CastError') {
+    return res.status(400).json({ success: false, message: 'Resource not found or invalid ID format' });
   }
 
-  const statusCode = err.statusCode || 500;
+  let statusCode = err.statusCode || err.status || 500;
+  if (statusCode === 401 && (err.type?.includes('Stripe') || err.rawType === 'authentication_error' || !err.isAuthError)) {
+    statusCode = 400;
+  }
+
   res.status(statusCode).json({
     success: false,
     message: err.message || 'Internal server error',
