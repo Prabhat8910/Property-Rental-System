@@ -1,73 +1,184 @@
 # 🏠 NestFinder – Property Rental Management System
 
-A full-stack property rental platform built with **React + Node.js + MySQL**, featuring role-based dashboards for Admins, Owners, and Tenants.
+A full-stack property rental platform built with **React, Node.js, Express, and MongoDB (Mongoose)**, featuring role-based dashboards for Admins, Owners, and Tenants.
+
+[![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/Prabhat8910/Property-Rental-System.git)
 
 ---
 
-## 📸 Features at a Glance
+## 📖 1. Project Overview
+
+**NestFinder** is a modern full-stack web application designed to streamline property rental operations. It enables property owners to list and manage rental properties, tenants to search, book, and pay for properties securely, and administrators to monitor platform activity and user operations.
+
+---
+
+## 📸 2. Features at a Glance
 
 | Feature | Details |
 |---|---|
 | **Authentication** | JWT-based login/register with bcrypt password hashing |
 | **Role-Based Access** | Admin · Owner · Tenant |
-| **Property Listings** | Add/edit/delete with images, filters, search |
-| **Booking System** | Calendar date-picker with conflict validation |
-| **Stripe Payments** | Card payments, payment history, webhooks |
-| **Maintenance Requests** | Tenants raise issues · Owners respond |
-| **Reviews & Ratings** | Verified reviews tied to completed bookings |
-| **Notifications** | In-app alerts for bookings, payments, maintenance |
-| **Wishlist** | Save favourite properties |
-| **Admin Panel** | User management, revenue charts, system overview |
-| **Responsive UI** | Mobile-friendly React + Tailwind CSS |
+| **Property Listings** | Add/edit/delete listings with image upload, filters, and search |
+| **Booking System** | Calendar date selection with date-overlap conflict validation |
+| **Stripe Payments** | Card payments via Stripe API, payment history, and webhooks |
+| **Maintenance Requests** | Tenants raise issue tickets · Owners review & respond |
+| **Reviews & Ratings** | Verified tenant reviews tied to property bookings |
+| **Notifications** | In-app notification alerts for bookings, payments, & maintenance |
+| **Wishlist** | Save and manage favorite properties |
+| **Admin Panel** | User management, revenue analytics, and system overview |
+| **Responsive UI** | Mobile-friendly React + Tailwind CSS dashboard |
 
 ---
 
-## 🗂️ Project Structure
+## 🧱 3. Tech Stack
 
-```
+| Layer | Technology |
+|---|---|
+| **Frontend** | React 18, Vite, Tailwind CSS, React Router v6 |
+| **Charts** | Recharts |
+| **HTTP Client** | Axios |
+| **Payments** | Stripe.js + React Stripe Integration |
+| **Backend** | Node.js, Express.js |
+| **Database** | MongoDB + Mongoose ODM |
+| **Authentication** | JSON Web Tokens (JWT) + bcryptjs |
+| **File Upload** | Multer |
+| **Email** | Nodemailer |
+| **Validation** | express-validator |
+
+---
+
+## 🗂️ 4. Project Structure
+
+```text
 property-rental/
 ├── backend/
 │   ├── src/
-│   │   ├── config/        # DB connection, migrations, seed
-│   │   ├── controllers/   # Business logic (auth, property, booking…)
-│   │   ├── middleware/    # JWT auth, error handler, file upload
-│   │   ├── routes/        # Express route definitions
-│   │   └── utils/         # Email, notifications
-│   ├── uploads/           # Uploaded property images (auto-created)
-│   ├── .env.example
+│   │   ├── config/        # Mongoose database connection, seeder, migration
+│   │   ├── controllers/   # Business logic (auth, property, booking, payment...)
+│   │   ├── middleware/    # JWT auth, error handling, upload middleware
+│   │   ├── models/        # Mongoose schemas (User, Property, Booking...)
+│   │   ├── routes/        # Express API endpoints
+│   │   ├── utils/         # Helper functions (email, notifications)
+│   │   └── server.js      # Express server entry point
+│   ├── uploads/           # Uploaded property images
+│   ├── .env.example       # Backend environment variables template
 │   └── package.json
 ├── frontend/
 │   ├── src/
-│   │   ├── components/    # Reusable UI (Navbar, PropertyCard, Calendar…)
-│   │   ├── context/       # AuthContext
-│   │   ├── pages/         # Auth, Tenant, Owner, Admin pages
-│   │   └── services/      # Axios API calls
-│   ├── .env.example
+│   │   ├── components/    # Reusable UI components & layouts
+│   │   ├── context/       # AuthContext for global session state
+│   │   ├── pages/         # Auth, Tenant, Owner, and Admin pages
+│   │   └── services/      # Axios API service instances
+│   ├── .env.example       # Frontend environment variables template
 │   └── package.json
 └── docs/
-    └── API.md             # Full API documentation
+    └── API.md             # Detailed API documentation
 ```
 
 ---
 
-## ⚙️ Prerequisites
+## ⚙️ 5. Architecture / Workflow
 
-- **Node.js** v18+
-- **MySQL** 8.0+
-- **npm** v9+
-- A **Stripe** account (free test mode is fine)
+```mermaid
+graph TD
+    User[Client Browser / React App] -->|HTTP Requests / Axios| API[Express API Server]
+    API -->|JWT Authentication| Auth[Auth Middleware]
+    API -->|Mongoose Queries| Mongo[(MongoDB Database)]
+    API -->|Payment Intents| Stripe[Stripe API]
+    API -->|Static File Uploads| Uploads[Multer File Storage]
+```
 
 ---
 
-## 🚀 Setup Instructions
+## 🗄️ 6. Database (MongoDB & Mongoose Models)
 
-### 1. Clone / Extract the project
+The backend uses **MongoDB** managed via **Mongoose** models located in `backend/src/models/`:
+
+| Collection / Model | Purpose | Key References |
+|---|---|---|
+| `users` | User accounts, roles, and profiles | Independent |
+| `properties` | Property listings, prices, images, amenities | `owner_id` → `User` |
+| `bookings` | Property booking requests & date ranges | `tenant_id` → `User`, `property_id` → `Property` |
+| `payments` | Stripe payment intents & receipt logs | `booking_id` → `Booking`, `tenant_id` → `User` |
+| `maintenance_requests` | Tenant issue tickets & owner resolutions | `property_id` → `Property`, `tenant_id` → `User` |
+| `reviews` | Property ratings and tenant comments | `user_id` → `User`, `property_id` → `Property`, `booking_id` → `Booking` |
+| `notifications` | User in-app notifications inbox | `user_id` → `User` |
+| `wishlists` | Saved favorite properties per user | `user_id` → `User`, `property_id` → `Property` |
+| `messages` | Direct tenant-owner communications | `sender_id` → `User`, `receiver_id` → `User` |
+
+---
+
+## 🔐 7. Authentication
+
+- **Registration & Login**: Secure user registration with password hashing (`bcryptjs`).
+- **Session Management**: Statess JWT authentication via `Authorization: Bearer <token>` header.
+- **Role Guards**: Backend `authorize('admin', 'owner', 'tenant')` middleware enforces strict role-based authorization for all protected routes.
+
+---
+
+## 📅 8. Booking Workflow & Date Conflict Validation
+
+1. **Tenant Booking Request**: Tenant selects `check_in` and `check_out` dates on a property.
+2. **Conflict Overlap Check**: The system validates that no existing booking with status `pending` or `confirmed` overlaps with the requested date range:
+   $$\text{check\_in} < \text{requested\_check\_out} \quad \text{AND} \quad \text{check\_out} > \text{requested\_check\_in}$$
+3. **Owner Decision**: Owner accepts or rejects the booking request from their dashboard.
+4. **Activation**: Upon owner acceptance and payment completion, the booking status transitions to `confirmed`.
+
+---
+
+## 💳 9. Stripe Payment Workflow
+
+1. **Intent Creation**: Backend generates a Stripe PaymentIntent (`/api/payments/create-intent`).
+2. **Frontend Payment**: Tenant submits card details securely via Stripe.
+3. **Confirmation**: Payments are confirmed on the backend (`/api/payments/confirm`) or via Stripe Webhook handlers (`/api/payments/webhook`).
+4. **Development Fallback**: Seamless mock payment mode is built-in for local development without active Stripe live keys.
+
+---
+
+## 🔧 10. Maintenance Workflow
+
+1. **Issue Creation**: Tenant submits a maintenance ticket for a booked property with category, priority, description, and optional images.
+2. **Owner Review**: Property owner receives an in-app notification and views the ticket in their dashboard.
+3. **Status Update**: Owner updates ticket status (`open` $\rightarrow$ `in_progress` $\rightarrow$ `resolved`) and adds notes.
+
+---
+
+## 🌐 11. API Overview
+
+Full API documentation is available in [`docs/API.md`](docs/API.md).
+
+### Main Endpoints Summary:
+- `POST /api/auth/register` – Register user
+- `POST /api/auth/login` – Authenticate user & receive JWT
+- `GET /api/properties` – Search & list properties
+- `POST /api/properties` – Create property listing (Owner/Admin)
+- `POST /api/bookings` – Submit property booking request
+- `PUT /api/bookings/:id/status` – Accept/reject booking (Owner)
+- `POST /api/payments/create-intent` – Initialize Stripe payment
+- `POST /api/payments/confirm` – Finalize payment
+- `POST /api/maintenance` – Raise maintenance ticket
+- `GET /api/admin/dashboard` – Fetch platform statistics (Admin)
+
+---
+
+## ⚙️ 12. Prerequisites
+
+- **Node.js** v18+
+- **MongoDB** v6.0+ (Local MongoDB instance or MongoDB Atlas cluster)
+- **npm** v9+
+
+---
+
+## 🚀 13. Installation & Setup Instructions
+
+### 1. Clone the repository
 
 ```bash
+git clone https://github.com/Prabhat8910/Property-Rental-System.git
 cd property-rental
 ```
 
-### 2. Set up the Backend
+### 2. Backend Setup
 
 ```bash
 cd backend
@@ -75,187 +186,121 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env` with your values:
-
+Configure `backend/.env`:
 ```env
-DB_HOST=localhost
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=your_mysql_password
-DB_NAME=property_rental
-JWT_SECRET=change_this_to_a_long_random_string
-STRIPE_SECRET_KEY=sk_test_xxxxx
+PORT=5000
+NODE_ENV=development
+MONGODB_URI=mongodb://localhost:27017/property_rental
+JWT_SECRET=your_jwt_secret_key
+STRIPE_SECRET_KEY=sk_test_your_key
+STRIPE_WEBHOOK_SECRET=whsec_your_key
+FRONTEND_URL=http://localhost:5173
 ```
 
-**Run database migrations:**
-```bash
-npm run migrate
-```
-
-**Seed demo data:**
+**Seed Demo Data into MongoDB:**
 ```bash
 npm run seed
 ```
 
-**Start the backend:**
+**Start Backend Server:**
 ```bash
-npm run dev       # Development (nodemon)
-npm start         # Production
+npm run dev
 ```
+*(Backend runs at `http://localhost:5000`)*
 
-Backend runs at: `http://localhost:5000`
+### 3. Frontend Setup
 
----
-
-### 3. Set up the Frontend
-
+Open a new terminal:
 ```bash
 cd frontend
 npm install
 cp .env.example .env
 ```
 
-Edit `.env`:
+Configure `frontend/.env`:
 ```env
-VITE_STRIPE_PUBLISHABLE_KEY=pk_test_xxxxx
+VITE_STRIPE_PUBLISHABLE_KEY=pk_test_your_key
 ```
 
-**Start the frontend:**
+**Start Frontend Server:**
 ```bash
 npm run dev
 ```
-
-Frontend runs at: `http://localhost:5173`
+*(Frontend runs at `http://localhost:5173`)*
 
 ---
 
-## 🔐 Demo Credentials
+## 🔐 14. Demo Credentials
 
-After seeding, use these test accounts:
+After running `npm run seed`, log in with these pre-seeded test accounts:
 
 | Role | Email | Password |
 |---|---|---|
-| Admin | admin@rental.com | Password123! |
-| Owner | owner1@rental.com | Password123! |
-| Tenant | tenant1@rental.com | Password123! |
+| **Admin** | `admin@rental.com` | `Password123!` |
+| **Owner** | `owner1@rental.com` | `Password123!` |
+| **Tenant** | `tenant1@rental.com` | `Password123!` |
 
 ---
 
-## 💳 Stripe Test Cards
+## 💳 15. Stripe Test Cards
 
-| Card | Number |
-|---|---|
-| Success | `4242 4242 4242 4242` |
-| Declined | `4000 0000 0000 0002` |
-| 3D Secure | `4000 0025 0000 3155` |
-
-Use any future expiry (e.g. `12/29`) and any 3-digit CVV.
+| Card Type | Number | Expiry | CVV |
+|---|---|---|---|
+| **Success** | `4242 4242 4242 4242` | Any future date (e.g. `12/28`) | `123` |
+| **Declined** | `4000 0000 0000 0002` | Any future date | `123` |
 
 ---
 
-## 🗄️ Database Schema
+## 🚀 16. Deployment
 
-| Table | Purpose |
-|---|---|
-| `users` | All users with role (admin/owner/tenant) |
-| `properties` | Property listings with images, amenities |
-| `bookings` | Booking requests with date range + status |
-| `payments` | Payment records linked to bookings (Stripe) |
-| `maintenance_requests` | Tenant issue reports |
-| `reviews` | Ratings + comments linked to bookings |
-| `notifications` | In-app notification inbox |
-| `wishlists` | Saved properties per user |
-| `messages` | Direct messages (schema ready) |
+### Frontend (Vercel)
+1. Import repository to Vercel.
+2. Set Root Directory to `frontend`.
+3. Set Environment Variable `VITE_STRIPE_PUBLISHABLE_KEY`.
+4. Deploy.
 
----
+### Backend (Render / Railway)
+1. Connect repository to Render / Railway.
+2. Set Root Directory to `backend`.
+3. Build Command: `npm install`
+4. Start Command: `npm start`
+5. Configure Environment Variables: `MONGODB_URI`, `JWT_SECRET`, `STRIPE_SECRET_KEY`, `FRONTEND_URL`.
 
-## 🌐 API Overview
-
-See [`docs/API.md`](docs/API.md) for full documentation.
-
-Quick endpoints:
-- `POST /api/auth/login` – Login
-- `GET  /api/properties` – Browse listings
-- `POST /api/bookings` – Create booking
-- `POST /api/payments/create-intent` – Start payment
-- `GET  /api/admin/dashboard` – Admin stats
+### Database (MongoDB Atlas)
+1. Create a free cluster on MongoDB Atlas.
+2. Obtain connection URI and paste it into `MONGODB_URI` environment variable.
 
 ---
 
-## 🚀 Deployment
+## 🔧 17. Available Scripts
 
-### Frontend → Vercel
-
-```bash
-cd frontend
-npm run build
-# Deploy dist/ to Vercel
-```
-
-Or connect GitHub repo to Vercel — set env var `VITE_STRIPE_PUBLISHABLE_KEY`.
-
-### Backend → Render / Railway
-
-1. Push backend to GitHub
-2. Create a new Web Service on Render/Railway
-3. Set build command: `npm install`
-4. Set start command: `npm start`
-5. Add all `.env` variables in the dashboard
-
-### Database → PlanetScale / Railway MySQL
-
-1. Create a MySQL database
-2. Update `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` in production env
-3. Run `npm run migrate` against production DB
-
----
-
-## 🔧 Available Scripts
-
-### Backend
+### Backend (`backend/package.json`)
 | Command | Description |
 |---|---|
-| `npm run dev` | Start with nodemon (hot reload) |
-| `npm start` | Start production server |
-| `npm run migrate` | Create all database tables |
-| `npm run seed` | Populate with demo data |
+| `npm run dev` | Start Express server with nodemon |
+| `npm start` | Start Express server in production |
+| `npm run migrate` | Initialize MongoDB schemas and indexes |
+| `npm run seed` | Populate MongoDB database with test data |
 
-### Frontend
+### Frontend (`frontend/package.json`)
 | Command | Description |
 |---|---|
-| `npm run dev` | Start Vite dev server |
-| `npm run build` | Build for production |
-| `npm run preview` | Preview production build |
+| `npm run dev` | Start Vite development server |
+| `npm run build` | Build production bundle |
+| `npm run preview` | Locally preview production build |
 
 ---
 
-## 🛣️ Roadmap / Bonus Features
+## 🛣️ 18. Roadmap
 
 - [ ] Real-time chat (Socket.io) between tenant & owner
-- [ ] Google Maps integration for property location
-- [ ] Email notifications (configure SMTP in .env)
-- [ ] PDF rent receipts
-- [ ] Tenant credit scoring
-- [ ] Multi-language support
+- [ ] Google Maps integration for property locations
+- [ ] Email notifications for booking confirmation (Nodemailer)
+- [ ] PDF rent receipt generation
+- [ ] Multi-currency support
 
 ---
 
-## 🧱 Tech Stack
+## 📄 19. License
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 18, Vite, Tailwind CSS, React Router v6 |
-| Charts | Recharts |
-| Payments | Stripe.js + React Stripe |
-| Backend | Node.js, Express 4 |
-| Database | MySQL 8 with mysql2 |
-| Auth | JWT + bcryptjs |
-| File Upload | Multer |
-| Email | Nodemailer |
-| Validation | express-validator |
-
----
-
-## 📄 License
-
-MIT — free to use and modify.
+This project is licensed under the **MIT License** — free for personal and educational use.
