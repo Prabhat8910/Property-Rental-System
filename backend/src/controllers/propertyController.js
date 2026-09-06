@@ -6,6 +6,7 @@ const Wishlist = require('../models/Wishlist');
 const Booking = require('../models/Booking');
 const Payment = require('../models/Payment');
 const User = require('../models/User');
+const { uploadToCloudinary } = require('../utils/cloudinary');
 
 const findPropertyByIdOrUuid = async (id) => {
   if (mongoose.Types.ObjectId.isValid(id)) {
@@ -129,7 +130,15 @@ const getProperty = async (req, res, next) => {
 const createProperty = async (req, res, next) => {
   try {
     const { title, description, location, city, state, country, zip_code, price, price_type, property_type, bedrooms, bathrooms, area_sqft, amenities, latitude, longitude } = req.body;
-    const images = req.files ? req.files.map((f) => `/uploads/${f.filename}`) : [];
+
+    // Upload images to Cloudinary (buffer from memoryStorage)
+    let images = [];
+    if (req.files && req.files.length > 0) {
+      const uploads = await Promise.all(
+        req.files.map((f) => uploadToCloudinary(f.buffer, 'properties'))
+      );
+      images = uploads;
+    }
 
     let parsedAmenities = [];
     if (amenities) {
@@ -184,8 +193,12 @@ const updateProperty = async (req, res, next) => {
     if (req.body.amenities) {
       property.amenities = typeof req.body.amenities === 'string' ? JSON.parse(req.body.amenities) : req.body.amenities;
     }
-    if (req.files?.length) {
-      property.images = req.files.map((f) => `/uploads/${f.filename}`);
+    if (req.files && req.files.length > 0) {
+      // Upload new images to Cloudinary
+      const uploads = await Promise.all(
+        req.files.map((f) => uploadToCloudinary(f.buffer, 'properties'))
+      );
+      property.images = uploads;
     }
 
     await property.save();

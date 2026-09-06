@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const User = require('../models/User');
 const { sendEmail } = require('../utils/email');
+const { uploadToCloudinary } = require('../utils/cloudinary');
 
 const generateToken = (userId) =>
   jwt.sign({ userId: userId.toString() }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
@@ -86,7 +87,12 @@ const getMe = async (req, res, next) => {
 const updateProfile = async (req, res, next) => {
   try {
     const { name, phone } = req.body;
-    const avatar = req.file ? `/uploads/${req.file.filename}` : undefined;
+
+    // Upload avatar to Cloudinary if provided (buffer from memoryStorage)
+    let avatar;
+    if (req.file && req.file.buffer) {
+      avatar = await uploadToCloudinary(req.file.buffer, 'avatars');
+    }
 
     const updates = {};
     if (name) updates.name = name;

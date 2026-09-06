@@ -219,6 +219,7 @@ cp .env.example .env
 
 Configure `frontend/.env`:
 ```env
+VITE_API_URL=http://localhost:5000/api
 VITE_STRIPE_PUBLISHABLE_KEY=pk_test_your_key
 ```
 
@@ -256,19 +257,24 @@ After running `npm run seed`, log in with these pre-seeded test accounts:
 ### Frontend (Vercel)
 1. Import repository to Vercel.
 2. Set Root Directory to `frontend`.
-3. Set Environment Variable `VITE_STRIPE_PUBLISHABLE_KEY`.
+3. Set Environment Variables:
+   - `VITE_API_URL` = `https://your-backend.onrender.com/api`
+   - `VITE_STRIPE_PUBLISHABLE_KEY` = `pk_test_your_key`
 4. Deploy.
 
-### Backend (Render / Railway)
-1. Connect repository to Render / Railway.
+### Backend (Render)
+1. Connect repository to Render (Web Service).
 2. Set Root Directory to `backend`.
-3. Build Command: `npm install`
-4. Start Command: `npm start`
-5. Configure Environment Variables: `MONGODB_URI`, `JWT_SECRET`, `STRIPE_SECRET_KEY`, `FRONTEND_URL`.
+3. Runtime: Node
+4. Build Command: `npm install`
+5. Start Command: `npm start`
+6. Health Check Path: `/api/health`
+7. Configure Environment Variables: `MONGODB_URI`, `JWT_SECRET`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `FRONTEND_URL`.
 
 ### Database (MongoDB Atlas)
 1. Create a free cluster on MongoDB Atlas.
-2. Obtain connection URI and paste it into `MONGODB_URI` environment variable.
+2. Allow access from anywhere (`0.0.0.0/0`) or Render IPs.
+3. Obtain connection URI and paste it into `MONGODB_URI` in Render environment variables.
 
 ---
 

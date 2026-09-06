@@ -5,6 +5,7 @@ const Property = require('../models/Property');
 const User = require('../models/User');
 const { createNotification } = require('../utils/notification');
 const { findPropertyByIdOrUuid } = require('./propertyController');
+const { uploadToCloudinary } = require('../utils/cloudinary');
 
 const findMaintenanceByIdOrUuid = async (id) => {
   if (mongoose.Types.ObjectId.isValid(id)) {
@@ -18,7 +19,15 @@ const findMaintenanceByIdOrUuid = async (id) => {
 const createRequest = async (req, res, next) => {
   try {
     const { property_id, title, description, category, priority } = req.body;
-    const images = req.files ? req.files.map((f) => `/uploads/${f.filename}`) : [];
+
+    // Upload images to Cloudinary (buffer from memoryStorage)
+    let images = [];
+    if (req.files && req.files.length > 0) {
+      const uploads = await Promise.all(
+        req.files.map((f) => uploadToCloudinary(f.buffer, 'maintenance'))
+      );
+      images = uploads;
+    }
 
     const property = await findPropertyByIdOrUuid(property_id);
     if (!property) return res.status(404).json({ success: false, message: 'Property not found' });
